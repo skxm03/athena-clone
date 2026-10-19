@@ -2,14 +2,29 @@
 import { useEffect, useRef, useState } from 'react'
 import './App.css'
 
+function formatTime(seconds) {
+  if (seconds === '' || seconds === null || seconds === undefined) return '00:00';
+  const secNum = parseInt(seconds, 10) || 0;
+  const mins = Math.floor(secNum / 60);
+  const secs = secNum % 60;
+  const hours = Math.floor(mins / 60);
+  const remMins = mins % 60;
+  if (hours > 0) {
+    return `${String(hours).padStart(2, '0')}:${String(remMins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  }
+  return `${String(remMins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
+
 function App() {
   // state variables
   const [cameraEnabled, setCameraEnabled] = useState(false);
   const [fullScreen, setFullScreen] = useState(false);
   const [timer, setTimer] = useState('');
+  const [testRunning, setTestRunning] = useState(false);
 
   // ref variables
   const videoRef = useRef(null);
+  const cameraStreamRef = useRef(null);
 
 
   useEffect(() => {
@@ -32,13 +47,21 @@ function App() {
     };
   }, []);
 
+  // Re-attach camera feed if returning to setup screen
+  useEffect(() => {
+    if (!testRunning && videoRef.current && cameraStreamRef.current) {
+      videoRef.current.srcObject = cameraStreamRef.current;
+    }
+  }, [testRunning]);
+
   async function saveVideoScreenShots() {
-    if (!videoRef.current || !videoRef.current.srcObject) {
+    const stream = cameraStreamRef.current || videoRef.current?.srcObject;
+    if (!stream) {
       return;
     }
 
     try {
-      const track = videoRef.current.srcObject.getVideoTracks()[0];
+      const track = stream.getVideoTracks()[0];
       if (!track) return;
 
       // Use ImageCapture API
@@ -67,8 +90,9 @@ function App() {
         video: true
       });
 
+      cameraStreamRef.current = videoData;
       if (videoRef.current) {
-        videoRef.current.srcObject = videoData
+        videoRef.current.srcObject = videoData;
       }
       setCameraEnabled(true);
     } catch (error) {
@@ -89,6 +113,96 @@ function App() {
       console.error("Error requesting fullscreen:", error);
       alert('Cannot access full screen');
     }
+  }
+
+  async function handleStartTest() {
+    try {
+      await window.athena?.startTimerOnMain?.();
+      setTestRunning(true);
+    } catch (error) {
+      console.error("Error starting test:", error);
+    }
+  }
+
+  async function handleEndTest() {
+    try {
+      await window.athena?.stopTimerOnMain?.();
+    } catch (error) {
+      console.error("Error stopping test:", error);
+    }
+    setTestRunning(false);
+    setTimer('');
+  }
+
+
+  if (testRunning) {
+    return (
+      <div className="page-container">
+        <div className="test-running-card">
+          <div className="test-running-header">
+            <div>
+              <h2 className="test-running-title">Assessment in Progress</h2>
+              <p className="test-running-subtitle">Your camera and screen are currently being monitored.</p>
+            </div>
+            <div className="proctor-badge">
+              <span className="pulsing-dot"></span>
+              Proctoring Active
+            </div>
+          </div>
+
+          {/* Timer Display */}
+          <div className="timer-box">
+            <span className="timer-label">Time Elapsed</span>
+            <span className="timer-display">{formatTime(timer)}</span>
+            <span className="timer-subtext">
+              {timer !== '' ? `${timer} seconds elapsed` : 'Starting test timer...'}
+            </span>
+          </div>
+
+          {/* Active Proctoring Video Feed */}
+          {cameraStreamRef.current && (
+            <div className="test-running-camera-preview">
+              <video
+                ref={(el) => {
+                  if (el && cameraStreamRef.current && el.srcObject !== cameraStreamRef.current) {
+                    el.srcObject = cameraStreamRef.current;
+                  }
+                }}
+                autoPlay
+                playsInline
+                muted
+                className="video-preview"
+              />
+            </div>
+          )}
+
+          {/* Action Row */}
+          <div style={{ display: 'flex', justifyContent: 'center', gap: '12px' }}>
+            <button
+              className="btn btn-danger"
+              onClick={handleEndTest}
+            >
+              End Test
+            </button>
+          </div>
+        </div>
+
+        {/* Manual Test Controls */}
+        <div style={{ display: 'flex', gap: '10px', marginTop: '10px', justifyContent: 'center' }}>
+          <button onClick={() => saveVideoScreenShots()}>
+            saveVideoScreenShots
+          </button>
+
+          <button onClick={() => saveScreenSnap()}>
+            saveScreenSnap
+          </button>
+
+          <button onClick={() => window.athena?.showRules?.()}>
+            Show Native Rules
+          </button>
+        </div>
+      </div>
+    );
   }
 
 
@@ -145,20 +259,10 @@ function App() {
         <button
           className="btn btn-primary"
           disabled={!cameraEnabled || !fullScreen}
-          onClick={async () => {
-            try {
-              await window.athena?.startTimerOnMain?.();
-            } catch (error) {
-              console.error("Error starting timer:", error);
-            }
-          }}
+          onClick={handleStartTest}
         >
           Go To Test
         </button>
-      </div>
-
-      <div>
-        {timer + ' (s) elapsed'}
       </div>
 
       <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>

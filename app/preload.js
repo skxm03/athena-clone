@@ -21,6 +21,13 @@ contextBridge.exposeInMainWorld("athena", {
             throw "error";
         }
     },
+    stopTimerOnMain: () => {
+        try {
+            return ipcRenderer.invoke('stop-timer');
+        } catch {
+            throw "error";
+        }
+    },
 
     // New Preload Functions
 

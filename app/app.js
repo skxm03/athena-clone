@@ -65,30 +65,50 @@ async function captureScreenSnap() {
     }
 }
 
+let timerInterval = null;
+let cameraInterval = null;
+let screenInterval = null;
+
+function clearTimers() {
+    if (timerInterval) clearInterval(timerInterval);
+    if (cameraInterval) clearInterval(cameraInterval);
+    if (screenInterval) clearInterval(screenInterval);
+    timerInterval = null;
+    cameraInterval = null;
+    screenInterval = null;
+}
+
 ipcMain.handle('start-timer', () => {
+    clearTimers();
     startTimestamp = Date.now();
 
     // Send Timer Tick every 1s
-    setInterval(() => {
+    timerInterval = setInterval(() => {
         if (electronWindow && !electronWindow.isDestroyed()) {
-            electronWindow.webContents.send('timer', (Date.now() - startTimestamp) / 1000);
+            electronWindow.webContents.send('timer', Math.floor((Date.now() - startTimestamp) / 1000));
         }
     }, 1000);
 
     // Capture user's camera snap every 5s
-    setInterval(() => {
+    cameraInterval = setInterval(() => {
         if (electronWindow && !electronWindow.isDestroyed()) {
             electronWindow.webContents.send('camera-shot');
         }
     }, 5000);
 
     // Capture user's screen snap every 5s using desktopCapturer
-    setInterval(async () => {
+    screenInterval = setInterval(async () => {
         await captureScreenSnap();
         if (electronWindow && !electronWindow.isDestroyed()) {
             electronWindow.webContents.send('screen-shot');
         }
     }, 5000);
+});
+
+ipcMain.handle('stop-timer', () => {
+    clearTimers();
+    startTimestamp = null;
+    return true;
 });
 
 ipcMain.handle('store-camera-snap-image-on-disk', (_event, data) => {
