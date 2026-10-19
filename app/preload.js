@@ -69,6 +69,22 @@ contextBridge.exposeInMainWorld("athena", {
         return ipcRenderer.invoke('is-kiosk');
     },
 
+    // Focus and Blur detection
+    onWindowBlur: (callback) => {
+        const fn = () => callback();
+        ipcRenderer.on('window-blur', fn);
+        return () => {
+            ipcRenderer.removeListener('window-blur', fn);
+        };
+    },
+    onWindowFocus: (callback) => {
+        const fn = () => callback();
+        ipcRenderer.on('window-focus', fn);
+        return () => {
+            ipcRenderer.removeListener('window-focus', fn);
+        };
+    },
+
     // Functions related to showing Contest Rules in a new Dialog
     showRules: () => {
         ipcRenderer.send("show-rules");

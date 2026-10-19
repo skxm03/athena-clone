@@ -10,10 +10,21 @@ function createWindow() {
     electronWindow = new BrowserWindow({
         height: 1000,
         width: 1000,
-        kiosk: true,
         webPreferences: {
             devTools: true,
             preload: path.join(import.meta.dirname, 'preload.js')
+        }
+    });
+
+    electronWindow.on('blur', () => {
+        if (electronWindow && !electronWindow.isDestroyed()) {
+            electronWindow.webContents.send('window-blur');
+        }
+    });
+
+    electronWindow.on('focus', () => {
+        if (electronWindow && !electronWindow.isDestroyed()) {
+            electronWindow.webContents.send('window-focus');
         }
     });
 

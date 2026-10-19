@@ -21,10 +21,14 @@ function App() {
   const [fullScreen, setFullScreen] = useState(false);
   const [timer, setTimer] = useState('');
   const [testRunning, setTestRunning] = useState(false);
+  const [strikes, setStrikes] = useState(0);
+  const [showFocusModal, setShowFocusModal] = useState(false);
+  const [exitNotice, setExitNotice] = useState('');
 
   // ref variables
   const videoRef = useRef(null);
   const cameraStreamRef = useRef(null);
+  const isBlurredRef = useRef(false);
 
 
   useEffect(() => {
@@ -46,6 +50,41 @@ function App() {
       removeCameraSnapListener?.();
     };
   }, []);
+
+  // Focus and Blur detection - starts only when test is running
+  useEffect(() => {
+    if (!testRunning) return;
+
+    function handleFocusLoss() {
+      // Prevent multiple flags for the same focus loss
+      if (isBlurredRef.current) return;
+      isBlurredRef.current = true;
+
+      setStrikes((prev) => {
+        const nextStrikes = Math.min(prev + 1, 3);
+        return nextStrikes;
+      });
+
+      setShowFocusModal(true);
+    }
+
+    function handleFocusGain() {
+      // Window regained focus
+    }
+
+    window.addEventListener('blur', handleFocusLoss);
+    window.addEventListener('focus', handleFocusGain);
+
+    const removeMainBlur = window.athena?.onWindowBlur?.(handleFocusLoss);
+    const removeMainFocus = window.athena?.onWindowFocus?.(handleFocusGain);
+
+    return () => {
+      window.removeEventListener('blur', handleFocusLoss);
+      window.removeEventListener('focus', handleFocusGain);
+      removeMainBlur?.();
+      removeMainFocus?.();
+    };
+  }, [testRunning]);
 
   // Re-attach camera feed if returning to setup screen
   useEffect(() => {
@@ -118,13 +157,17 @@ function App() {
   async function handleStartTest() {
     try {
       await window.athena?.startTimerOnMain?.();
+      setStrikes(0);
+      setShowFocusModal(false);
+      setExitNotice('');
+      isBlurredRef.current = false;
       setTestRunning(true);
     } catch (error) {
       console.error("Error starting test:", error);
     }
   }
 
-  async function handleEndTest() {
+  async function handleEndTest(reason = '') {
     try {
       await window.athena?.stopTimerOnMain?.();
     } catch (error) {
@@ -132,6 +175,20 @@ function App() {
     }
     setTestRunning(false);
     setTimer('');
+    setShowFocusModal(false);
+    isBlurredRef.current = false;
+    if (reason) {
+      setExitNotice(reason);
+    }
+  }
+
+  function handleContinueAfterFocus() {
+    if (strikes >= 3) {
+      handleEndTest('You reached the maximum of 3 focus-loss strikes. The exam has ended.');
+    } else {
+      setShowFocusModal(false);
+      isBlurredRef.current = false;
+    }
   }
 
 
@@ -144,9 +201,17 @@ function App() {
               <h2 className="test-running-title">Assessment in Progress</h2>
               <p className="test-running-subtitle">Your camera and screen are currently being monitored.</p>
             </div>
-            <div className="proctor-badge">
-              <span className="pulsing-dot"></span>
-              Proctoring Active
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <div className="proctor-badge">
+                <span className="pulsing-dot"></span>
+                Proctoring Active
+              </div>
+              <div
+                className="proctor-badge"
+                style={strikes > 0 ? { backgroundColor: '#fee2e2', color: '#991b1b', borderColor: '#fca5a5' } : {}}
+              >
+                Strikes: {strikes}/3
+              </div>
             </div>
           </div>
 
@@ -180,12 +245,69 @@ function App() {
           <div style={{ display: 'flex', justifyContent: 'center', gap: '12px' }}>
             <button
               className="btn btn-danger"
-              onClick={handleEndTest}
+              onClick={() => handleEndTest()}
             >
               End Test
             </button>
           </div>
         </div>
+
+        {/* Focus Loss Dialogue Modal */}
+        {showFocusModal && (
+          <div className="modal-overlay">
+            <div className="modal-card">
+              <div className={`modal-icon-wrapper ${strikes >= 3 ? 'modal-icon-danger' : 'modal-icon-warning'}`}>
+                {strikes >= 3 ? '🚨' : '⚠️'}
+              </div>
+
+              <h3 className="modal-title">
+                {strikes >= 3 ? 'Exam Terminated' : 'Warning: Focus Lost!'}
+              </h3>
+
+              <p className="modal-description">
+                {strikes >= 3
+                  ? 'You have lost focus 3 times and reached the maximum allowed strikes. The exam will now end.'
+                  : 'Please return to the test screen. Stay on the exam screen to avoid disqualification. Your strike count was increased by 1.'}
+              </p>
+
+              {/* Strikes indicator */}
+              <div className="strikes-container">
+                <span className={`strike-pill ${strikes >= 1 ? 'active' : ''}`}>
+                  {strikes >= 1 ? '✕' : '○'} Strike 1
+                </span>
+                <span className={`strike-pill ${strikes >= 2 ? 'active' : ''}`}>
+                  {strikes >= 2 ? '✕' : '○'} Strike 2
+                </span>
+                <span className={`strike-pill ${strikes >= 3 ? 'active' : ''}`}>
+                  {strikes >= 3 ? '✕' : '○'} Strike 3 (Max)
+                </span>
+              </div>
+
+              {/* Live Timer badge inside modal (Timer continues running) */}
+              <div className="modal-timer-badge">
+                ⏱️ Timer continuing: <strong>{formatTime(timer)}</strong> ({timer || 0}s elapsed)
+              </div>
+
+              <div>
+                {strikes >= 3 ? (
+                  <button
+                    className="btn btn-danger"
+                    onClick={() => handleEndTest('You reached the maximum of 3 focus-loss strikes. The exam has ended.')}
+                  >
+                    Exit Test
+                  </button>
+                ) : (
+                  <button
+                    className="btn btn-primary"
+                    onClick={handleContinueAfterFocus}
+                  >
+                    Continue Test
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Manual Test Controls */}
         <div style={{ display: 'flex', gap: '10px', marginTop: '10px', justifyContent: 'center' }}>
@@ -208,6 +330,19 @@ function App() {
 
   return (
     <div className="page-container">
+      {/* Alert banner if test was ended due to 3 strikes */}
+      {exitNotice && (
+        <div className="alert-banner">
+          <span>⚠️ {exitNotice}</span>
+          <button
+            onClick={() => setExitNotice('')}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', color: '#991b1b' }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* Main Card */}
       <div className="card-container">
         {/* Section 1: Camera / Heimdall */}
