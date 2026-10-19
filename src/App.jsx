@@ -24,11 +24,15 @@ function App() {
   const [strikes, setStrikes] = useState(0);
   const [showFocusModal, setShowFocusModal] = useState(false);
   const [exitNotice, setExitNotice] = useState('');
+  const [cameraDir, setCameraDir] = useState('');
+  const [screenDir, setScreenDir] = useState('');
 
   // ref variables
   const videoRef = useRef(null);
   const cameraStreamRef = useRef(null);
   const isBlurredRef = useRef(false);
+  const cameraDirRef = useRef('');
+  const screenDirRef = useRef('');
 
 
   useEffect(() => {
@@ -36,6 +40,20 @@ function App() {
     window.athena?.isKiosk?.().then((kiosk) => {
       if (kiosk) {
         setFullScreen(true);
+      }
+    });
+
+    // Fetch initial snapshot directories
+    window.athena?.getDirectories?.().then((dirs) => {
+      if (dirs) {
+        if (dirs.cameraDir) {
+          setCameraDir(dirs.cameraDir);
+          cameraDirRef.current = dirs.cameraDir;
+        }
+        if (dirs.screenDir) {
+          setScreenDir(dirs.screenDir);
+          screenDirRef.current = dirs.screenDir;
+        }
       }
     });
 
@@ -108,8 +126,8 @@ function App() {
       const blob = await imageCapture.takePhoto();
       const arrayBuffer = await blob.arrayBuffer();
 
-      // Send raw binary buffer to main process
-      window.athena?.storeCameraSnapImageOnDisk?.(arrayBuffer);
+      // Send raw binary buffer to main process with custom directory
+      window.athena?.storeCameraSnapImageOnDisk?.(arrayBuffer, cameraDirRef.current || undefined);
     } catch (error) {
       console.error("Failed to capture image via ImageCapture:", error);
     }
@@ -117,9 +135,35 @@ function App() {
 
   async function saveScreenSnap() {
     try {
-      await window.athena?.captureScreenSnap?.();
+      await window.athena?.captureScreenSnap?.(screenDirRef.current || undefined);
     } catch (error) {
       console.error("Failed to capture screen via desktopCapturer:", error);
+    }
+  }
+
+  async function selectCameraDirectory() {
+    try {
+      const selected = await window.athena?.selectDirectory?.(cameraDirRef.current || undefined);
+      if (selected) {
+        setCameraDir(selected);
+        cameraDirRef.current = selected;
+        await window.athena?.setCameraDirectory?.(selected);
+      }
+    } catch (error) {
+      console.error("Error selecting camera directory:", error);
+    }
+  }
+
+  async function selectScreenDirectory() {
+    try {
+      const selected = await window.athena?.selectDirectory?.(screenDirRef.current || undefined);
+      if (selected) {
+        setScreenDir(selected);
+        screenDirRef.current = selected;
+        await window.athena?.setScreenDirectory?.(selected);
+      }
+    } catch (error) {
+      console.error("Error selecting screen directory:", error);
     }
   }
 
@@ -249,6 +293,10 @@ function App() {
             >
               End Test
             </button>
+          </div>
+
+          <div style={{ marginTop: '20px', fontSize: '12px', color: '#94a3b8', textAlign: 'center' }}>
+            <span>Camera snaps: <code style={{ color: '#475569' }}>{cameraDir ? (cameraDir.split('/').pop() || cameraDir) : 'user-camera-snap'}</code> | Screen snaps: <code style={{ color: '#475569' }}>{screenDir ? (screenDir.split('/').pop() || screenDir) : 'user-screen-snap'}</code></span>
           </div>
         </div>
 
@@ -385,6 +433,45 @@ function App() {
             >
               {fullScreen ? 'Full Screen Enabled' : 'Give Full Screen Permissions'}
             </button>
+          </div>
+        </div>
+
+        <div className="divider"></div>
+
+        {/* Section 3: Snapshot Storage Directories */}
+        <div className="permission-item">
+          <div className="permission-content" style={{ width: '100%' }}>
+            <h3>Snapshot Storage Directories</h3>
+            <p>Select where your camera and screen snapshots will be saved.</p>
+            <div className="storage-config-grid">
+              <div className="storage-config-item">
+                <div className="storage-label-group">
+                  <span className="storage-title">Camera Snaps Folder</span>
+                  <span className="storage-path" title={cameraDir}>{cameraDir || 'Loading default directory...'}</span>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-outline btn-sm"
+                  onClick={selectCameraDirectory}
+                >
+                  Change Directory
+                </button>
+              </div>
+
+              <div className="storage-config-item">
+                <div className="storage-label-group">
+                  <span className="storage-title">Screen Snaps Folder</span>
+                  <span className="storage-path" title={screenDir}>{screenDir || 'Loading default directory...'}</span>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-outline btn-sm"
+                  onClick={selectScreenDirectory}
+                >
+                  Change Directory
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </div>

@@ -40,8 +40,8 @@ contextBridge.exposeInMainWorld("athena", {
         }
     },
 
-    storeCameraSnapImageOnDisk: (data) => {
-        return ipcRenderer.invoke('store-camera-snap-image-on-disk', data);
+    storeCameraSnapImageOnDisk: (data, customDir) => {
+        return ipcRenderer.invoke('store-camera-snap-image-on-disk', data, customDir);
     },
 
     // Functions related to capturing screen snaps of user
@@ -53,12 +53,26 @@ contextBridge.exposeInMainWorld("athena", {
         }
     },
 
-    storeScreenSnapImageOnDisk: (data) => {
-        return ipcRenderer.invoke('store-screen-snap-image-on-disk', data);
+    storeScreenSnapImageOnDisk: (data, customDir) => {
+        return ipcRenderer.invoke('store-screen-snap-image-on-disk', data, customDir);
     },
 
-    captureScreenSnap: () => {
-        return ipcRenderer.invoke('capture-screen-snap');
+    captureScreenSnap: (customDir) => {
+        return ipcRenderer.invoke('capture-screen-snap', customDir);
+    },
+
+    // Directory selection functions
+    selectDirectory: (defaultPath) => {
+        return ipcRenderer.invoke('select-directory', defaultPath);
+    },
+    getDirectories: () => {
+        return ipcRenderer.invoke('get-directories');
+    },
+    setCameraDirectory: (dir) => {
+        return ipcRenderer.invoke('set-camera-directory', dir);
+    },
+    setScreenDirectory: (dir) => {
+        return ipcRenderer.invoke('set-screen-directory', dir);
     },
 
     // Kiosk Mode functions

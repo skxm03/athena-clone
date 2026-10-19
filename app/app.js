@@ -46,7 +46,51 @@ ipcMain.handle('is-kiosk', () => {
     return false;
 });
 
-async function captureScreenSnap() {
+let cameraSnapDir = path.join(import.meta.dirname, "user-camera-snap");
+let screenSnapDir = path.join(import.meta.dirname, "user-screen-snap");
+
+ipcMain.handle('select-directory', async (_event, defaultPath) => {
+    const result = await dialog.showOpenDialog(electronWindow, {
+        title: "Select Directory to Save Snapshots",
+        defaultPath: defaultPath || import.meta.dirname,
+        properties: ['openDirectory', 'createDirectory']
+    });
+    if (!result.canceled && result.filePaths && result.filePaths.length > 0) {
+        return result.filePaths[0];
+    }
+    return null;
+});
+
+ipcMain.handle('get-directories', () => {
+    return {
+        cameraDir: cameraSnapDir,
+        screenDir: screenSnapDir
+    };
+});
+
+ipcMain.handle('set-camera-directory', (_event, newDir) => {
+    if (newDir && typeof newDir === 'string') {
+        cameraSnapDir = newDir;
+        if (!fs.existsSync(cameraSnapDir)) {
+            fs.mkdirSync(cameraSnapDir, { recursive: true });
+        }
+        return cameraSnapDir;
+    }
+    return cameraSnapDir;
+});
+
+ipcMain.handle('set-screen-directory', (_event, newDir) => {
+    if (newDir && typeof newDir === 'string') {
+        screenSnapDir = newDir;
+        if (!fs.existsSync(screenSnapDir)) {
+            fs.mkdirSync(screenSnapDir, { recursive: true });
+        }
+        return screenSnapDir;
+    }
+    return screenSnapDir;
+});
+
+async function captureScreenSnap(customDir) {
     try {
         const primaryDisplay = screen.getPrimaryDisplay();
         const { width, height } = primaryDisplay.size;
@@ -63,7 +107,7 @@ async function captureScreenSnap() {
 
         if (sources.length > 0) {
             const buffer = sources[0].thumbnail.toJPEG(80);
-            const dir = path.join(import.meta.dirname, "user-screen-snap");
+            const dir = customDir || screenSnapDir;
             if (!fs.existsSync(dir)) {
                 fs.mkdirSync(dir, { recursive: true });
             }
@@ -109,7 +153,7 @@ ipcMain.handle('start-timer', () => {
 
     // Capture user's screen snap every 5s using desktopCapturer
     screenInterval = setInterval(async () => {
-        await captureScreenSnap();
+        await captureScreenSnap(screenSnapDir);
         if (electronWindow && !electronWindow.isDestroyed()) {
             electronWindow.webContents.send('screen-shot');
         }
@@ -122,26 +166,28 @@ ipcMain.handle('stop-timer', () => {
     return true;
 });
 
-ipcMain.handle('store-camera-snap-image-on-disk', (_event, data) => {
-    const dir = path.join(import.meta.dirname, "user-camera-snap");
+ipcMain.handle('store-camera-snap-image-on-disk', (_event, data, customDir) => {
+    const dir = customDir || cameraSnapDir;
     if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
     }
     const filePath = path.join(dir, `${Date.now()}.jpg`);
     fs.writeFileSync(filePath, Buffer.from(data));
+    return filePath;
 });
 
-ipcMain.handle('store-screen-snap-image-on-disk', (_event, data) => {
-    const dir = path.join(import.meta.dirname, "user-screen-snap");
+ipcMain.handle('store-screen-snap-image-on-disk', (_event, data, customDir) => {
+    const dir = customDir || screenSnapDir;
     if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
     }
     const filePath = path.join(dir, `${Date.now()}.jpg`);
     fs.writeFileSync(filePath, Buffer.from(data));
+    return filePath;
 });
 
-ipcMain.handle('capture-screen-snap', async () => {
-    return await captureScreenSnap();
+ipcMain.handle('capture-screen-snap', async (_event, customDir) => {
+    return await captureScreenSnap(customDir);
 });
 
 ipcMain.on("show-rules", () => {
