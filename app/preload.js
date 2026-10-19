@@ -102,5 +102,20 @@ contextBridge.exposeInMainWorld("athena", {
     // Functions related to showing Contest Rules in a new Dialog
     showRules: () => {
         ipcRenderer.send("show-rules");
+    },
+
+    // Anti-cheating & Clipboard controls
+    clearClipboard: () => {
+        return ipcRenderer.invoke('clear-clipboard');
+    },
+    setTestActive: (active) => {
+        return ipcRenderer.invoke('set-test-active', active);
+    },
+    onClipboardBlocked: (callback) => {
+        const fn = (_event, data) => callback(data);
+        ipcRenderer.on('clipboard-blocked', fn);
+        return () => {
+            ipcRenderer.removeListener('clipboard-blocked', fn);
+        };
     }
 })

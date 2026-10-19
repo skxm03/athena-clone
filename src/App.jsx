@@ -1,5 +1,5 @@
 // App.jsx
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import './App.css'
 
 function formatTime(seconds) {
@@ -26,6 +26,12 @@ function App() {
   const [exitNotice, setExitNotice] = useState('');
   const [cameraDir, setCameraDir] = useState('');
   const [screenDir, setScreenDir] = useState('');
+
+  // Mock test input and security state
+  const [essayAnswer, setEssayAnswer] = useState('');
+  const [shortAnswer, setShortAnswer] = useState('');
+  const [blockedAlert, setBlockedAlert] = useState(null);
+  const [blockedLog, setBlockedLog] = useState([]);
 
   // ref variables
   const videoRef = useRef(null);
@@ -110,6 +116,116 @@ function App() {
       videoRef.current.srcObject = cameraStreamRef.current;
     }
   }, [testRunning]);
+
+  const recordBlockedAction = useCallback((actionName) => {
+    const timeStr = new Date().toLocaleTimeString();
+    const id = Date.now() + Math.random();
+    setBlockedAlert({
+      id,
+      action: actionName,
+      message: `${actionName} is strictly prohibited during the exam. OS clipboard wiped.`,
+      type: 'danger'
+    });
+    setBlockedLog((prev) => [
+      { id, time: timeStr, action: actionName },
+      ...prev.slice(0, 8)
+    ]);
+    window.athena?.clearClipboard?.();
+  }, []);
+
+  // Listen for blocked events from main process (Electron before-input-event)
+  useEffect(() => {
+    if (!testRunning) return;
+
+    const removeBlockedListener = window.athena?.onClipboardBlocked?.((data) => {
+      recordBlockedAction(data?.action ? `${data.action} (Shortcut)` : 'Clipboard Shortcut');
+    });
+
+    return () => {
+      removeBlockedListener?.();
+    };
+  }, [testRunning, recordBlockedAction]);
+
+  // DOM-level event interception for copy, cut, paste, contextmenu, drag/drop, keydown
+  useEffect(() => {
+    if (!testRunning) return;
+
+    function handleCopy(e) {
+      e.preventDefault();
+      recordBlockedAction('Copy (Event)');
+    }
+
+    function handleCut(e) {
+      e.preventDefault();
+      recordBlockedAction('Cut (Event)');
+    }
+
+    function handlePaste(e) {
+      e.preventDefault();
+      recordBlockedAction('Paste (Event)');
+    }
+
+    function handleContextMenu(e) {
+      e.preventDefault();
+      recordBlockedAction('Right-Click Context Menu');
+    }
+
+    function handleDragOver(e) {
+      e.preventDefault();
+    }
+
+    function handleDrop(e) {
+      e.preventDefault();
+      recordBlockedAction('Drag & Drop Content');
+    }
+
+    function handleKeyDown(e) {
+      const modifier = e.metaKey || e.ctrlKey;
+      const key = (e.key || '').toLowerCase();
+
+      if ((modifier && key === 'c') || (e.ctrlKey && e.key === 'Insert')) {
+        e.preventDefault();
+        e.stopPropagation();
+        recordBlockedAction('Copy (Cmd/Ctrl+C)');
+      } else if ((modifier && key === 'v') || (e.shiftKey && e.key === 'Insert')) {
+        e.preventDefault();
+        e.stopPropagation();
+        recordBlockedAction('Paste (Cmd/Ctrl+V)');
+      } else if ((modifier && key === 'x') || (e.shiftKey && e.key === 'Delete')) {
+        e.preventDefault();
+        e.stopPropagation();
+        recordBlockedAction('Cut (Cmd/Ctrl+X)');
+      }
+    }
+
+    document.addEventListener('copy', handleCopy, true);
+    document.addEventListener('cut', handleCut, true);
+    document.addEventListener('paste', handlePaste, true);
+    document.addEventListener('contextmenu', handleContextMenu, true);
+    document.addEventListener('dragover', handleDragOver, true);
+    document.addEventListener('drop', handleDrop, true);
+    document.addEventListener('keydown', handleKeyDown, true);
+
+    return () => {
+      document.removeEventListener('copy', handleCopy, true);
+      document.removeEventListener('cut', handleCut, true);
+      document.removeEventListener('paste', handlePaste, true);
+      document.removeEventListener('contextmenu', handleContextMenu, true);
+      document.removeEventListener('dragover', handleDragOver, true);
+      document.removeEventListener('drop', handleDrop, true);
+      document.removeEventListener('keydown', handleKeyDown, true);
+    };
+  }, [testRunning, recordBlockedAction]);
+
+  // Auto-dismiss alert toast after 3.5s
+  useEffect(() => {
+    if (blockedAlert) {
+      const timerId = setTimeout(() => {
+        setBlockedAlert(null);
+      }, 3500);
+      return () => clearTimeout(timerId);
+    }
+  }, [blockedAlert]);
 
   async function saveVideoScreenShots() {
     const stream = cameraStreamRef.current || videoRef.current?.srcObject;
@@ -200,11 +316,24 @@ function App() {
 
   async function handleStartTest() {
     try {
+      // 1. Wipe OS clipboard immediately upon going to test
+      await window.athena?.clearClipboard?.();
+      // 2. Set test active in main process (sets restricted menu & before-input-event shortcut blocker)
+      await window.athena?.setTestActive?.(true);
+      // 3. Start timer
       await window.athena?.startTimerOnMain?.();
+
       setStrikes(0);
       setShowFocusModal(false);
       setExitNotice('');
       isBlurredRef.current = false;
+      setBlockedLog([]);
+      setBlockedAlert({
+        id: Date.now(),
+        action: 'Lockdown Initialized',
+        message: 'OS clipboard wiped clean upon test entry. Anti-cheating protections engaged.',
+        type: 'info'
+      });
       setTestRunning(true);
     } catch (error) {
       console.error("Error starting test:", error);
@@ -213,6 +342,7 @@ function App() {
 
   async function handleEndTest(reason = '') {
     try {
+      await window.athena?.setTestActive?.(false);
       await window.athena?.stopTimerOnMain?.();
     } catch (error) {
       console.error("Error stopping test:", error);
@@ -221,9 +351,20 @@ function App() {
     setTimer('');
     setShowFocusModal(false);
     isBlurredRef.current = false;
+    setBlockedAlert(null);
     if (reason) {
       setExitNotice(reason);
     }
+  }
+
+  function simulateManualWipe() {
+    window.athena?.clearClipboard?.();
+    setBlockedAlert({
+      id: Date.now(),
+      action: 'Clipboard Flushed',
+      message: 'System clipboard flushed and cleared.',
+      type: 'info'
+    });
   }
 
   function handleContinueAfterFocus() {
@@ -238,63 +379,250 @@ function App() {
 
   if (testRunning) {
     return (
-      <div className="page-container">
-        <div className="test-running-card">
-          <div className="test-running-header">
-            <div>
-              <h2 className="test-running-title">Assessment in Progress</h2>
-              <p className="test-running-subtitle">Your camera and screen are currently being monitored.</p>
+      <div className="page-container" style={{ maxWidth: '960px' }}>
+        {/* Floating Anti-Cheat Toast */}
+        {blockedAlert && (
+          <div className={`anti-cheat-toast ${blockedAlert.type}`}>
+            <div className="toast-icon">{blockedAlert.type === 'danger' ? '🚫' : '🛡️'}</div>
+            <div className="toast-content">
+              <strong>{blockedAlert.type === 'danger' ? 'Anti-Cheating Security Alert' : 'Assessment Environment'}</strong>
+              <p>{blockedAlert.message}</p>
             </div>
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <div className="proctor-badge">
-                <span className="pulsing-dot"></span>
-                Proctoring Active
+            <button className="toast-close" onClick={() => setBlockedAlert(null)}>×</button>
+          </div>
+        )}
+
+        <div className="mock-test-card">
+          {/* Header Bar */}
+          <div className="mock-test-header">
+            <div className="mock-header-info">
+              <h2>Computer Systems & Architecture Assessment</h2>
+              <p>Section 1: Asynchronous Execution & Event Loop • Candidate #3842</p>
+            </div>
+
+            <div className="mock-header-controls">
+              {/* Live Timer */}
+              <div className="test-timer-badge">
+                <span className="timer-val">{formatTime(timer)}</span>
+                <span className="timer-caption">Time Elapsed</span>
               </div>
+
+              {/* Strikes Counter */}
               <div
                 className="proctor-badge"
                 style={strikes > 0 ? { backgroundColor: '#fee2e2', color: '#991b1b', borderColor: '#fca5a5' } : {}}
               >
                 Strikes: {strikes}/3
               </div>
+
+              {/* Active Picture-in-Picture Webcam */}
+              {cameraStreamRef.current && (
+                <div className="pip-camera-box" title="Live proctoring webcam feed">
+                  <video
+                    ref={(el) => {
+                      if (el && cameraStreamRef.current && el.srcObject !== cameraStreamRef.current) {
+                        el.srcObject = cameraStreamRef.current;
+                      }
+                    }}
+                    autoPlay
+                    playsInline
+                    muted
+                    className="pip-video"
+                  />
+                  <span className="pip-tag">● LIVE</span>
+                </div>
+              )}
+
+              {/* End / Submit Test Button */}
+              <button
+                className="btn btn-danger"
+                onClick={() => handleEndTest()}
+              >
+                End Test
+              </button>
             </div>
           </div>
 
-          {/* Timer Display */}
-          <div className="timer-box">
-            <span className="timer-label">Time Elapsed</span>
-            <span className="timer-display">{formatTime(timer)}</span>
-            <span className="timer-subtext">
-              {timer !== '' ? `${timer} seconds elapsed` : 'Starting test timer...'}
-            </span>
+          {/* Security Status Banner */}
+          <div className="security-status-banner">
+            <span className="security-banner-icon">🛡️</span>
+            <div className="security-banner-content">
+              <strong>Proctoring Lockdown Active:</strong> OS Clipboard was wiped on test start. Cut, Copy, Paste (Keyboard shortcuts & Context menu), and text drag-and-drop are strictly blocked.
+            </div>
+            <span className="security-pill">PROTECTION ACTIVE</span>
           </div>
 
-          {/* Active Proctoring Video Feed */}
-          {cameraStreamRef.current && (
-            <div className="test-running-camera-preview">
-              <video
-                ref={(el) => {
-                  if (el && cameraStreamRef.current && el.srcObject !== cameraStreamRef.current) {
-                    el.srcObject = cameraStreamRef.current;
-                  }
-                }}
-                autoPlay
-                playsInline
-                muted
-                className="video-preview"
+          {/* Mock Test Questions Workspace */}
+          <div className="mock-question-section">
+            {/* Question 1: Long Answer / Essay with Code Snippet */}
+            <div className="question-block">
+              <div className="question-header">
+                <span className="question-num">Question 1</span>
+                <span className="question-marks">20 Marks</span>
+              </div>
+              <p className="question-text">
+                Explain the difference in execution scheduling between <strong>Microtasks</strong> (e.g., <code>Promise.then</code>, <code>queueMicrotask</code>) and <strong>Macrotasks</strong> (e.g., <code>setTimeout</code>) in the JavaScript runtime. What is the output order of the following snippet?
+              </p>
+
+              <div className="code-snippet-hint">💡 Try selecting the snippet below and pressing Cmd+C or Ctrl+C to test copy blocking:</div>
+              <pre className="code-snippet-box">
+{`console.log('1: Start');
+setTimeout(() => console.log('2: Timeout'), 0);
+Promise.resolve().then(() => console.log('3: Promise'));
+queueMicrotask(() => console.log('4: Microtask'));
+console.log('5: End');`}
+              </pre>
+
+              <div className="editor-wrapper">
+                <div className="editor-meta">
+                  <span><strong>Candidate Answer Workspace</strong> (Type freely to test input)</span>
+                  <span>
+                    {essayAnswer.trim() ? essayAnswer.trim().split(/\s+/).length : 0} words | {essayAnswer.length} chars
+                  </span>
+                </div>
+                <textarea
+                  className="mock-textarea"
+                  rows={6}
+                  value={essayAnswer}
+                  onChange={(e) => setEssayAnswer(e.target.value)}
+                  placeholder="Type your explanation and code response here...
+- Try selecting your text and pressing Cmd+C / Ctrl+C
+- Try pressing Cmd+V / Ctrl+V to paste
+- Try pressing Cmd+X / Ctrl+X to cut
+- Try right-clicking for context menu"
+                />
+              </div>
+            </div>
+
+            {/* Question 2: Short Answer Input */}
+            <div className="question-block">
+              <div className="question-header">
+                <span className="question-num">Question 2</span>
+                <span className="question-marks">10 Marks</span>
+              </div>
+              <p className="question-text">
+                Which native JavaScript API function directly queues a microtask onto the microtask queue without using Promises?
+              </p>
+              <input
+                type="text"
+                className="mock-input"
+                value={shortAnswer}
+                onChange={(e) => setShortAnswer(e.target.value)}
+                placeholder="Type short answer here (e.g., queueMicrotask)... Try Cmd+C, Cmd+V, or Cut"
               />
             </div>
-          )}
 
-          {/* Action Row */}
-          <div style={{ display: 'flex', justifyContent: 'center', gap: '12px' }}>
-            <button
-              className="btn btn-danger"
-              onClick={() => handleEndTest()}
-            >
-              End Test
-            </button>
+            {/* Interactive Anti-Cheating Verification & Sandbox Panel */}
+            <div className="verification-panel">
+              <div className="verification-title">
+                <span>🧪</span>
+                <span>Anti-Cheating Verification Sandbox</span>
+              </div>
+              <p className="verification-desc">
+                Verify that your system protections are actively intercepting unauthorized operations and not merely cosmetic:
+              </p>
+
+              <div className="protection-chips-grid">
+                <div className="protection-chip">
+                  <span>System Clipboard</span>
+                  <span className="status-badge cleared">WIPED ✅</span>
+                </div>
+                <div className="protection-chip">
+                  <span>Copy (Cmd/Ctrl+C)</span>
+                  <span className="status-badge">BLOCKED 🔒</span>
+                </div>
+                <div className="protection-chip">
+                  <span>Paste (Cmd/Ctrl+V)</span>
+                  <span className="status-badge">BLOCKED 🔒</span>
+                </div>
+                <div className="protection-chip">
+                  <span>Cut (Cmd/Ctrl+X)</span>
+                  <span className="status-badge">BLOCKED 🔒</span>
+                </div>
+                <div className="protection-chip">
+                  <span>Right-Click Menu</span>
+                  <span className="status-badge">BLOCKED 🔒</span>
+                </div>
+                <div className="protection-chip">
+                  <span>Drag-and-Drop</span>
+                  <span className="status-badge">BLOCKED 🔒</span>
+                </div>
+              </div>
+
+              <div className="sim-btn-row">
+                <button
+                  type="button"
+                  className="btn btn-outline btn-sm"
+                  onClick={() => recordBlockedAction('Simulated Copy')}
+                >
+                  Test Copy Interception
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-outline btn-sm"
+                  onClick={() => recordBlockedAction('Simulated Paste')}
+                >
+                  Test Paste Interception
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-outline btn-sm"
+                  onClick={() => recordBlockedAction('Simulated Cut')}
+                >
+                  Test Cut Interception
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-outline btn-sm"
+                  onClick={simulateManualWipe}
+                >
+                  Re-Wipe Clipboard Now
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-outline btn-sm"
+                  onClick={() => saveVideoScreenShots()}
+                >
+                  Capture Camera Snap
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-outline btn-sm"
+                  onClick={() => saveScreenSnap()}
+                >
+                  Capture Screen Snap
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-outline btn-sm"
+                  onClick={() => window.athena?.showRules?.()}
+                >
+                  Show Native Rules
+                </button>
+              </div>
+
+              {/* Live Interception Console Feed */}
+              <div className="audit-terminal">
+                <div style={{ color: '#94a3b8', marginBottom: '6px', fontSize: '11px' }}>
+                  ── LIVE SECURITY INTERCEPTION LOG ──
+                </div>
+                {blockedLog.length === 0 ? (
+                  <div className="audit-empty">
+                    No violations detected yet. Try typing above, or test pressing Cmd+C, Cmd+V, Cmd+X, or Right-Clicking.
+                  </div>
+                ) : (
+                  blockedLog.map((item) => (
+                    <div key={item.id} className="audit-entry">
+                      <span className="audit-time">[{item.time}]</span>
+                      <span className="audit-msg">🚫 INTERCEPTED: {item.action} blocked & OS clipboard purged</span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
           </div>
 
+          {/* Snapshot Storage Footer Indicator */}
           <div style={{ marginTop: '20px', fontSize: '12px', color: '#94a3b8', textAlign: 'center' }}>
             <span>Camera snaps: <code style={{ color: '#475569' }}>{cameraDir ? (cameraDir.split('/').pop() || cameraDir) : 'user-camera-snap'}</code> | Screen snaps: <code style={{ color: '#475569' }}>{screenDir ? (screenDir.split('/').pop() || screenDir) : 'user-screen-snap'}</code></span>
           </div>
@@ -356,21 +684,6 @@ function App() {
             </div>
           </div>
         )}
-
-        {/* Manual Test Controls */}
-        <div style={{ display: 'flex', gap: '10px', marginTop: '10px', justifyContent: 'center' }}>
-          <button onClick={() => saveVideoScreenShots()}>
-            saveVideoScreenShots
-          </button>
-
-          <button onClick={() => saveScreenSnap()}>
-            saveScreenSnap
-          </button>
-
-          <button onClick={() => window.athena?.showRules?.()}>
-            Show Native Rules
-          </button>
-        </div>
       </div>
     );
   }
