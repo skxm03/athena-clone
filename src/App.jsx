@@ -13,15 +13,22 @@ function App() {
 
 
   useEffect(() => {
+    // Check initial kiosk mode status
+    window.athena?.isKiosk?.().then((kiosk) => {
+      if (kiosk) {
+        setFullScreen(true);
+      }
+    });
+
     // Register Listener for handling Timer Tick from Main
-    const removeTimerTickListener = window.athena.registerListenerForTimerTickFromMain(setTimer);
+    const removeTimerTickListener = window.athena?.registerListenerForTimerTickFromMain?.(setTimer);
 
     // Register Listener for handling Camera Snap Request from Main
-    const removeCameraSnapListener = window.athena.registerListenerForCameraSnapFromMain(saveVideoScreenShots);
+    const removeCameraSnapListener = window.athena?.registerListenerForCameraSnapFromMain?.(saveVideoScreenShots);
 
     return () => {
-      removeTimerTickListener()
-      removeCameraSnapListener()
+      removeTimerTickListener?.();
+      removeCameraSnapListener?.();
     };
   }, []);
 
@@ -40,9 +47,17 @@ function App() {
       const arrayBuffer = await blob.arrayBuffer();
 
       // Send raw binary buffer to main process
-      window.athena.storeCameraSnapImageOnDisk(arrayBuffer);
+      window.athena?.storeCameraSnapImageOnDisk?.(arrayBuffer);
     } catch (error) {
       console.error("Failed to capture image via ImageCapture:", error);
+    }
+  }
+
+  async function saveScreenSnap() {
+    try {
+      await window.athena?.captureScreenSnap?.();
+    } catch (error) {
+      console.error("Failed to capture screen via desktopCapturer:", error);
     }
   }
 
@@ -57,15 +72,21 @@ function App() {
       }
       setCameraEnabled(true);
     } catch (error) {
+      console.error("Error accessing camera:", error);
       alert('Cannot access Camera');
     }
   }
 
   async function enableFullScreen() {
     try {
-      await document.documentElement.requestFullscreen();
+      if (window.athena?.setKiosk) {
+        await window.athena.setKiosk(true);
+      } else {
+        await document.documentElement.requestFullscreen();
+      }
       setFullScreen(true);
     } catch (error) {
+      console.error("Error requesting fullscreen:", error);
       alert('Cannot access full screen');
     }
   }
@@ -126,9 +147,9 @@ function App() {
           disabled={!cameraEnabled || !fullScreen}
           onClick={async () => {
             try {
-              const response = await window.athena.startTimerOnMain();
+              await window.athena?.startTimerOnMain?.();
             } catch (error) {
-
+              console.error("Error starting timer:", error);
             }
           }}
         >
@@ -140,18 +161,24 @@ function App() {
         {timer + ' (s) elapsed'}
       </div>
 
-      <div>
+      <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
         <button onClick={() => {
           saveVideoScreenShots()
         }}>
           saveVideoScreenShots
+        </button>
+
+        <button onClick={() => {
+          saveScreenSnap()
+        }}>
+          saveScreenSnap
         </button>
       </div>
 
 
       <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
         <button onClick={() => {
-          window.athena.showRules()
+          window.athena?.showRules?.()
         }}>
           Show Native Rules
         </button>

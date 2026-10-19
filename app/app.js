@@ -1,43 +1,117 @@
-import { app, BrowserWindow, ipcMain, dialog } from "electron";
+import { app, BrowserWindow, ipcMain, dialog, desktopCapturer, screen } from "electron";
 import path from "path";
 import fs from "fs";
+import { Buffer } from "buffer";
 
 let electronWindow = null;
-let startTimestamp = null
+let startTimestamp = null;
 
 function createWindow() {
     electronWindow = new BrowserWindow({
         height: 1000,
         width: 1000,
+        kiosk: true,
         webPreferences: {
             devTools: true,
             preload: path.join(import.meta.dirname, 'preload.js')
         }
-    })
+    });
 
-    electronWindow.loadURL('http://localhost:5173')
+    electronWindow.loadURL('http://localhost:5173');
 }
 
-ipcMain.handle('start-timer', (event) => {
+ipcMain.handle('set-kiosk', (_event, flag = true) => {
+    if (electronWindow && !electronWindow.isDestroyed()) {
+        electronWindow.setKiosk(flag);
+        return electronWindow.isKiosk();
+    }
+    return false;
+});
+
+ipcMain.handle('is-kiosk', () => {
+    if (electronWindow && !electronWindow.isDestroyed()) {
+        return electronWindow.isKiosk();
+    }
+    return false;
+});
+
+async function captureScreenSnap() {
+    try {
+        const primaryDisplay = screen.getPrimaryDisplay();
+        const { width, height } = primaryDisplay.size;
+        const scaleFactor = primaryDisplay.scaleFactor || 1;
+        const thumbnailSize = {
+            width: Math.round(width * scaleFactor),
+            height: Math.round(height * scaleFactor)
+        };
+
+        const sources = await desktopCapturer.getSources({
+            types: ['screen'],
+            thumbnailSize
+        });
+
+        if (sources.length > 0) {
+            const buffer = sources[0].thumbnail.toJPEG(80);
+            const dir = path.join(import.meta.dirname, "user-screen-snap");
+            if (!fs.existsSync(dir)) {
+                fs.mkdirSync(dir, { recursive: true });
+            }
+            const filePath = path.join(dir, `${Date.now()}.jpg`);
+            fs.writeFileSync(filePath, buffer);
+            return filePath;
+        }
+    } catch (err) {
+        console.error("Failed to capture screen using desktopCapturer:", err);
+    }
+}
+
+ipcMain.handle('start-timer', () => {
     startTimestamp = Date.now();
 
     // Send Timer Tick every 1s
     setInterval(() => {
-        electronWindow.webContents.send('timer', (Date.now() - startTimestamp) / 1000);
+        if (electronWindow && !electronWindow.isDestroyed()) {
+            electronWindow.webContents.send('timer', (Date.now() - startTimestamp) / 1000);
+        }
     }, 1000);
 
     // Capture user's camera snap every 5s
     setInterval(() => {
-        electronWindow.webContents.send('camera-shot')
+        if (electronWindow && !electronWindow.isDestroyed()) {
+            electronWindow.webContents.send('camera-shot');
+        }
     }, 5000);
-})
 
+    // Capture user's screen snap every 5s using desktopCapturer
+    setInterval(async () => {
+        await captureScreenSnap();
+        if (electronWindow && !electronWindow.isDestroyed()) {
+            electronWindow.webContents.send('screen-shot');
+        }
+    }, 5000);
+});
 
 ipcMain.handle('store-camera-snap-image-on-disk', (_event, data) => {
-    const filePath = path.join(import.meta.dirname, "user-camera-snap", `${Date.now()}.jpg`);
+    const dir = path.join(import.meta.dirname, "user-camera-snap");
+    if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+    }
+    const filePath = path.join(dir, `${Date.now()}.jpg`);
     fs.writeFileSync(filePath, Buffer.from(data));
-})
+});
 
+ipcMain.handle('store-screen-snap-image-on-disk', (_event, data) => {
+    const dir = path.join(import.meta.dirname, "user-screen-snap");
+    if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+    }
+    const filePath = path.join(dir, `${Date.now()}.jpg`);
+    fs.writeFileSync(filePath, Buffer.from(data));
+});
+
+ipcMain.handle('capture-screen-snap', async () => {
+    return await captureScreenSnap();
+});
 
 ipcMain.on("show-rules", () => {
     dialog.showMessageBox(electronWindow, {
@@ -52,6 +126,5 @@ ipcMain.on("show-rules", () => {
             "5. Click Exit Exam when finished."
     });
 });
-
 
 app.whenReady().then(createWindow);

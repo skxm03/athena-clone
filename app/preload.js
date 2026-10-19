@@ -17,7 +17,7 @@ contextBridge.exposeInMainWorld("athena", {
     startTimerOnMain: () => {
         try {
             return ipcRenderer.invoke('start-timer');
-        } catch (error) {
+        } catch {
             throw "error";
         }
     },
@@ -34,7 +34,32 @@ contextBridge.exposeInMainWorld("athena", {
     },
 
     storeCameraSnapImageOnDisk: (data) => {
-        ipcRenderer.invoke('store-camera-snap-image-on-disk', data);
+        return ipcRenderer.invoke('store-camera-snap-image-on-disk', data);
+    },
+
+    // Functions related to capturing screen snaps of user
+    registerListenerForScreenSnapFromMain: (callback) => {
+        ipcRenderer.on('screen-shot', callback);
+
+        return () => {
+            ipcRenderer.removeListener('screen-shot', callback);
+        }
+    },
+
+    storeScreenSnapImageOnDisk: (data) => {
+        return ipcRenderer.invoke('store-screen-snap-image-on-disk', data);
+    },
+
+    captureScreenSnap: () => {
+        return ipcRenderer.invoke('capture-screen-snap');
+    },
+
+    // Kiosk Mode functions
+    setKiosk: (flag = true) => {
+        return ipcRenderer.invoke('set-kiosk', flag);
+    },
+    isKiosk: () => {
+        return ipcRenderer.invoke('is-kiosk');
     },
 
     // Functions related to showing Contest Rules in a new Dialog
