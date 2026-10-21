@@ -18,6 +18,7 @@ function formatTime(seconds) {
 function App() {
   // state variables
   const [cameraEnabled, setCameraEnabled] = useState(false);
+  const [cameraStream, setCameraStream] = useState(null);
   const [fullScreen, setFullScreen] = useState(false);
   const [timer, setTimer] = useState('');
   const [testRunning, setTestRunning] = useState(false);
@@ -35,22 +36,43 @@ function App() {
 
   // ref variables
   const videoRef = useRef(null);
+  const pipVideoRef = useRef(null);
   const cameraStreamRef = useRef(null);
   const isBlurredRef = useRef(false);
   const cameraDirRef = useRef('');
   const screenDirRef = useRef('');
 
 
+  const saveVideoScreenShots = useCallback(async () => {
+    const stream = cameraStreamRef.current || videoRef.current?.srcObject;
+    if (!stream) {
+      return;
+    }
+
+    try {
+      const track = stream.getVideoTracks()[0];
+      if (!track) return;
+
+      const imageCapture = new ImageCapture(track);
+      const blob = await imageCapture.takePhoto();
+      const arrayBuffer = await blob.arrayBuffer();
+
+      window.athena?.storeCameraSnapImageOnDisk?.(arrayBuffer, cameraDirRef.current || undefined);
+    } catch (error) {
+      console.error("Failed to capture image via ImageCapture:", error);
+    }
+  }, []);
+
   useEffect(() => {
     // Check initial kiosk mode status
-    window.athena?.isKiosk?.().then((kiosk) => {
+    window.athena?.isKiosk?.()?.then((kiosk) => {
       if (kiosk) {
         setFullScreen(true);
       }
     });
 
     // Fetch initial snapshot directories
-    window.athena?.getDirectories?.().then((dirs) => {
+    window.athena?.getDirectories?.()?.then((dirs) => {
       if (dirs) {
         if (dirs.cameraDir) {
           setCameraDir(dirs.cameraDir);
@@ -73,7 +95,7 @@ function App() {
       removeTimerTickListener?.();
       removeCameraSnapListener?.();
     };
-  }, []);
+  }, [saveVideoScreenShots]);
 
   // Focus and Blur detection - starts only when test is running
   useEffect(() => {
@@ -110,12 +132,18 @@ function App() {
     };
   }, [testRunning]);
 
-  // Re-attach camera feed if returning to setup screen
+  // Synchronize camera video feeds
   useEffect(() => {
-    if (!testRunning && videoRef.current && cameraStreamRef.current) {
-      videoRef.current.srcObject = cameraStreamRef.current;
+    if (!testRunning && videoRef.current && cameraStream) {
+      videoRef.current.srcObject = cameraStream;
     }
-  }, [testRunning]);
+  }, [testRunning, cameraStream]);
+
+  useEffect(() => {
+    if (testRunning && pipVideoRef.current && cameraStream) {
+      pipVideoRef.current.srcObject = cameraStream;
+    }
+  }, [testRunning, cameraStream]);
 
   const recordBlockedAction = useCallback((actionName) => {
     const timeStr = new Date().toLocaleTimeString();
@@ -227,35 +255,7 @@ function App() {
     }
   }, [blockedAlert]);
 
-  async function saveVideoScreenShots() {
-    const stream = cameraStreamRef.current || videoRef.current?.srcObject;
-    if (!stream) {
-      return;
-    }
 
-    try {
-      const track = stream.getVideoTracks()[0];
-      if (!track) return;
-
-      // Use ImageCapture API
-      const imageCapture = new ImageCapture(track);
-      const blob = await imageCapture.takePhoto();
-      const arrayBuffer = await blob.arrayBuffer();
-
-      // Send raw binary buffer to main process with custom directory
-      window.athena?.storeCameraSnapImageOnDisk?.(arrayBuffer, cameraDirRef.current || undefined);
-    } catch (error) {
-      console.error("Failed to capture image via ImageCapture:", error);
-    }
-  }
-
-  async function saveScreenSnap() {
-    try {
-      await window.athena?.captureScreenSnap?.(screenDirRef.current || undefined);
-    } catch (error) {
-      console.error("Failed to capture screen via desktopCapturer:", error);
-    }
-  }
 
   async function selectCameraDirectory() {
     try {
@@ -290,10 +290,11 @@ function App() {
       });
 
       cameraStreamRef.current = videoData;
+      setCameraStream(videoData);
+      setCameraEnabled(true);
       if (videoRef.current) {
         videoRef.current.srcObject = videoData;
       }
-      setCameraEnabled(true);
     } catch (error) {
       console.error("Error accessing camera:", error);
       alert('Cannot access Camera');
@@ -357,16 +358,6 @@ function App() {
     }
   }
 
-  function simulateManualWipe() {
-    window.athena?.clearClipboard?.();
-    setBlockedAlert({
-      id: Date.now(),
-      action: 'Clipboard Flushed',
-      message: 'System clipboard flushed and cleared.',
-      type: 'info'
-    });
-  }
-
   function handleContinueAfterFocus() {
     if (strikes >= 3) {
       handleEndTest('You reached the maximum of 3 focus-loss strikes. The exam has ended.');
@@ -376,96 +367,98 @@ function App() {
     }
   }
 
-
+  // ==========================================
+  // ASSESSMENT / TEST RUNNING SCREEN (Full Screen)
+  // ==========================================
   if (testRunning) {
     return (
-      <div className="page-container" style={{ maxWidth: '960px' }}>
-        {/* Floating Anti-Cheat Toast */}
+      <div className="assessment-screen">
+        {/* Minimal Toast Alert */}
         {blockedAlert && (
-          <div className={`anti-cheat-toast ${blockedAlert.type}`}>
-            <div className="toast-icon">{blockedAlert.type === 'danger' ? '🚫' : '🛡️'}</div>
-            <div className="toast-content">
-              <strong>{blockedAlert.type === 'danger' ? 'Anti-Cheating Security Alert' : 'Assessment Environment'}</strong>
-              <p>{blockedAlert.message}</p>
-            </div>
-            <button className="toast-close" onClick={() => setBlockedAlert(null)}>×</button>
+          <div className={`clean-toast ${blockedAlert.type}`}>
+            <span>{blockedAlert.type === 'danger' ? '🚫' : '🛡️'}</span>
+            <span>{blockedAlert.message}</span>
           </div>
         )}
 
-        <div className="mock-test-card">
-          {/* Header Bar */}
-          <div className="mock-test-header">
-            <div className="mock-header-info">
-              <h2>Computer Systems & Architecture Assessment</h2>
-              <p>Section 1: Asynchronous Execution & Event Loop • Candidate #3842</p>
+        {/* Top Sticky Navigation Bar */}
+        <header className="assessment-nav">
+          <div className="assessment-meta">
+            <span className="assessment-title">Computer Systems & Architecture Assessment</span>
+            <span className="assessment-candidate">Candidate #3842 • Section A</span>
+          </div>
+
+          <div className="assessment-nav-center">
+            <div className="timer-pill" title="Elapsed Time">
+              <span>⏱</span>
+              <span>{formatTime(timer)}</span>
             </div>
 
-            <div className="mock-header-controls">
-              {/* Live Timer */}
-              <div className="test-timer-badge">
-                <span className="timer-val">{formatTime(timer)}</span>
-                <span className="timer-caption">Time Elapsed</span>
-              </div>
-
-              {/* Strikes Counter */}
-              <div
-                className="proctor-badge"
-                style={strikes > 0 ? { backgroundColor: '#fee2e2', color: '#991b1b', borderColor: '#fca5a5' } : {}}
-              >
-                Strikes: {strikes}/3
-              </div>
-
-              {/* Active Picture-in-Picture Webcam */}
-              {cameraStreamRef.current && (
-                <div className="pip-camera-box" title="Live proctoring webcam feed">
-                  <video
-                    ref={(el) => {
-                      if (el && cameraStreamRef.current && el.srcObject !== cameraStreamRef.current) {
-                        el.srcObject = cameraStreamRef.current;
-                      }
-                    }}
-                    autoPlay
-                    playsInline
-                    muted
-                    className="pip-video"
-                  />
-                  <span className="pip-tag">● LIVE</span>
-                </div>
-              )}
-
-              {/* End / Submit Test Button */}
-              <button
-                className="btn btn-danger"
-                onClick={() => handleEndTest()}
-              >
-                End Test
-              </button>
+            <div
+              className={`strike-counter-pill ${strikes > 0 ? 'has-strikes' : ''}`}
+              title="Focus loss strikes (max 3)"
+            >
+              <span>Strikes:</span>
+              <strong>{strikes}/3</strong>
             </div>
           </div>
 
-          {/* Security Status Banner */}
-          <div className="security-status-banner">
-            <span className="security-banner-icon">🛡️</span>
-            <div className="security-banner-content">
-              <strong>Proctoring Lockdown Active:</strong> OS Clipboard was wiped on test start. Cut, Copy, Paste (Keyboard shortcuts & Context menu), and text drag-and-drop are strictly blocked.
-            </div>
-            <span className="security-pill">PROTECTION ACTIVE</span>
-          </div>
+          <div className="assessment-nav-right">
+            {/* Renamed "open rules" button to "Test Strikes" */}
+            <button
+              type="button"
+              className="btn btn-outline btn-sm"
+              onClick={() => window.athena?.showRules?.()}
+              title="Triggers a native dialog which causes window blur to test strike increment"
+            >
+              Test Strikes
+            </button>
 
-          {/* Mock Test Questions Workspace */}
-          <div className="mock-question-section">
-            {/* Question 1: Long Answer / Essay with Code Snippet */}
-            <div className="question-block">
-              <div className="question-header">
-                <span className="question-num">Question 1</span>
-                <span className="question-marks">20 Marks</span>
+            {/* Compact Webcam PiP */}
+            {cameraEnabled && (
+              <div className="pip-preview-box" title="Live proctoring webcam active">
+                <video
+                  ref={pipVideoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                />
+                <span className="pip-status-dot">● LIVE</span>
               </div>
-              <p className="question-text">
+            )}
+
+            <button
+              type="button"
+              className="btn btn-danger btn-sm"
+              onClick={() => handleEndTest()}
+            >
+              End Test
+            </button>
+          </div>
+        </header>
+
+        {/* Clean Single-Line Proctoring Notice */}
+        <div className="proctoring-notice-strip">
+          <span className="proctoring-notice-dot"></span>
+          <span>Proctoring Active — OS Clipboard cleared. Cut, copy, paste, context menu, and window switching are disabled.</span>
+        </div>
+
+        {/* Full-Screen Widescreen Assessment Layout */}
+        <main className="assessment-body">
+          {/* Main Questions Column */}
+          <section className="questions-col">
+            {/* Question 1: Code & Essay */}
+            <article className="question-card">
+              <div className="question-card-top">
+                <span className="question-badge">Question 1</span>
+                <span className="question-points">20 Marks</span>
+              </div>
+
+              <p className="question-prompt">
                 Explain the difference in execution scheduling between <strong>Microtasks</strong> (e.g., <code>Promise.then</code>, <code>queueMicrotask</code>) and <strong>Macrotasks</strong> (e.g., <code>setTimeout</code>) in the JavaScript runtime. What is the output order of the following snippet?
               </p>
 
-              <div className="code-snippet-hint">💡 Try selecting the snippet below and pressing Cmd+C or Ctrl+C to test copy blocking:</div>
-              <pre className="code-snippet-box">
+              <pre className="clean-code-block">
 {`console.log('1: Start');
 setTimeout(() => console.log('2: Timeout'), 0);
 Promise.resolve().then(() => console.log('3: Promise'));
@@ -473,160 +466,106 @@ queueMicrotask(() => console.log('4: Microtask'));
 console.log('5: End');`}
               </pre>
 
-              <div className="editor-wrapper">
-                <div className="editor-meta">
-                  <span><strong>Candidate Answer Workspace</strong> (Type freely to test input)</span>
+              <div className="clean-answer-wrapper">
+                <div className="clean-answer-meta">
+                  <span><strong>Candidate Answer</strong> (Type response below)</span>
                   <span>
-                    {essayAnswer.trim() ? essayAnswer.trim().split(/\s+/).length : 0} words | {essayAnswer.length} chars
+                    {essayAnswer.trim() ? essayAnswer.trim().split(/\s+/).length : 0} words | {essayAnswer.length} characters
                   </span>
                 </div>
                 <textarea
-                  className="mock-textarea"
-                  rows={6}
+                  className="clean-textarea"
+                  rows={8}
                   value={essayAnswer}
                   onChange={(e) => setEssayAnswer(e.target.value)}
                   placeholder="Type your explanation and code response here...
-- Try selecting your text and pressing Cmd+C / Ctrl+C
-- Try pressing Cmd+V / Ctrl+V to paste
-- Try pressing Cmd+X / Ctrl+X to cut
-- Try right-clicking for context menu"
+(Try selecting text and pressing Cmd+C, or pressing Cmd+V to paste, or right-clicking to verify protection)"
                 />
               </div>
-            </div>
+            </article>
 
-            {/* Question 2: Short Answer Input */}
-            <div className="question-block">
-              <div className="question-header">
-                <span className="question-num">Question 2</span>
-                <span className="question-marks">10 Marks</span>
+            {/* Question 2: Short Answer */}
+            <article className="question-card">
+              <div className="question-card-top">
+                <span className="question-badge">Question 2</span>
+                <span className="question-points">10 Marks</span>
               </div>
-              <p className="question-text">
+
+              <p className="question-prompt">
                 Which native JavaScript API function directly queues a microtask onto the microtask queue without using Promises?
               </p>
+
               <input
                 type="text"
-                className="mock-input"
+                className="clean-input"
                 value={shortAnswer}
                 onChange={(e) => setShortAnswer(e.target.value)}
-                placeholder="Type short answer here (e.g., queueMicrotask)... Try Cmd+C, Cmd+V, or Cut"
+                placeholder="Type short answer here (e.g. queueMicrotask)..."
               />
+            </article>
+          </section>
+
+          {/* Clean Sidebar Column */}
+          <aside className="sidebar-col">
+            {/* Enforced Policies Card */}
+            <div className="sidebar-card">
+              <h3 className="sidebar-title">Active Protections</h3>
+              <div className="sidebar-list">
+                <div className="sidebar-list-item">
+                  <span>OS Clipboard</span>
+                  <span className="badge-mini active">Cleared & Locked</span>
+                </div>
+                <div className="sidebar-list-item">
+                  <span>Copy / Cut / Paste</span>
+                  <span className="badge-mini active">Intercepted</span>
+                </div>
+                <div className="sidebar-list-item">
+                  <span>Right-Click Menu</span>
+                  <span className="badge-mini active">Suppressed</span>
+                </div>
+                <div className="sidebar-list-item">
+                  <span>Focus Loss Limit</span>
+                  <span className="badge-mini">3 Strikes Max</span>
+                </div>
+              </div>
+
+              <div className="sidebar-dirs">
+                <div>Camera Snaps: <code>{cameraDir ? (cameraDir.split('/').pop() || cameraDir) : 'user-camera-snap'}</code></div>
+                <div style={{ marginTop: '4px' }}>Screen Snaps: <code>{screenDir ? (screenDir.split('/').pop() || screenDir) : 'user-screen-snap'}</code></div>
+              </div>
             </div>
 
-            {/* Interactive Anti-Cheating Verification & Sandbox Panel */}
-            <div className="verification-panel">
-              <div className="verification-title">
-                <span>🧪</span>
-                <span>Anti-Cheating Verification Sandbox</span>
-              </div>
-              <p className="verification-desc">
-                Verify that your system protections are actively intercepting unauthorized operations and not merely cosmetic:
-              </p>
-
-              <div className="protection-chips-grid">
-                <div className="protection-chip">
-                  <span>System Clipboard</span>
-                  <span className="status-badge cleared">WIPED ✅</span>
-                </div>
-                <div className="protection-chip">
-                  <span>Copy (Cmd/Ctrl+C)</span>
-                  <span className="status-badge">BLOCKED 🔒</span>
-                </div>
-                <div className="protection-chip">
-                  <span>Paste (Cmd/Ctrl+V)</span>
-                  <span className="status-badge">BLOCKED 🔒</span>
-                </div>
-                <div className="protection-chip">
-                  <span>Cut (Cmd/Ctrl+X)</span>
-                  <span className="status-badge">BLOCKED 🔒</span>
-                </div>
-                <div className="protection-chip">
-                  <span>Right-Click Menu</span>
-                  <span className="status-badge">BLOCKED 🔒</span>
-                </div>
-                <div className="protection-chip">
-                  <span>Drag-and-Drop</span>
-                  <span className="status-badge">BLOCKED 🔒</span>
-                </div>
+            {/* Clean Interception Log Feed */}
+            <div className="sidebar-card">
+              <div className="sidebar-title">
+                <span>Interception Log</span>
+                {blockedLog.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setBlockedLog([])}
+                    style={{ background: 'none', border: 'none', color: '#64748b', fontSize: '11px', cursor: 'pointer' }}
+                  >
+                    Clear
+                  </button>
+                )}
               </div>
 
-              <div className="sim-btn-row">
-                <button
-                  type="button"
-                  className="btn btn-outline btn-sm"
-                  onClick={() => recordBlockedAction('Simulated Copy')}
-                >
-                  Test Copy Interception
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-outline btn-sm"
-                  onClick={() => recordBlockedAction('Simulated Paste')}
-                >
-                  Test Paste Interception
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-outline btn-sm"
-                  onClick={() => recordBlockedAction('Simulated Cut')}
-                >
-                  Test Cut Interception
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-outline btn-sm"
-                  onClick={simulateManualWipe}
-                >
-                  Re-Wipe Clipboard Now
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-outline btn-sm"
-                  onClick={() => saveVideoScreenShots()}
-                >
-                  Capture Camera Snap
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-outline btn-sm"
-                  onClick={() => saveScreenSnap()}
-                >
-                  Capture Screen Snap
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-outline btn-sm"
-                  onClick={() => window.athena?.showRules?.()}
-                >
-                  Show Native Rules
-                </button>
-              </div>
-
-              {/* Live Interception Console Feed */}
-              <div className="audit-terminal">
-                <div style={{ color: '#94a3b8', marginBottom: '6px', fontSize: '11px' }}>
-                  ── LIVE SECURITY INTERCEPTION LOG ──
-                </div>
+              <div className="clean-log-feed">
                 {blockedLog.length === 0 ? (
-                  <div className="audit-empty">
-                    No violations detected yet. Try typing above, or test pressing Cmd+C, Cmd+V, Cmd+X, or Right-Clicking.
+                  <div className="clean-log-empty">
+                    No unauthorized actions recorded. Copy & paste attempts will appear here.
                   </div>
                 ) : (
                   blockedLog.map((item) => (
-                    <div key={item.id} className="audit-entry">
-                      <span className="audit-time">[{item.time}]</span>
-                      <span className="audit-msg">🚫 INTERCEPTED: {item.action} blocked & OS clipboard purged</span>
+                    <div key={item.id} className="clean-log-item">
+                      <strong>[{item.time}]</strong> Blocked {item.action}
                     </div>
                   ))
                 )}
               </div>
             </div>
-          </div>
-
-          {/* Snapshot Storage Footer Indicator */}
-          <div style={{ marginTop: '20px', fontSize: '12px', color: '#94a3b8', textAlign: 'center' }}>
-            <span>Camera snaps: <code style={{ color: '#475569' }}>{cameraDir ? (cameraDir.split('/').pop() || cameraDir) : 'user-camera-snap'}</code> | Screen snaps: <code style={{ color: '#475569' }}>{screenDir ? (screenDir.split('/').pop() || screenDir) : 'user-screen-snap'}</code></span>
-          </div>
-        </div>
+          </aside>
+        </main>
 
         {/* Focus Loss Dialogue Modal */}
         {showFocusModal && (
@@ -659,14 +598,15 @@ console.log('5: End');`}
                 </span>
               </div>
 
-              {/* Live Timer badge inside modal (Timer continues running) */}
+              {/* Live Timer badge inside modal */}
               <div className="modal-timer-badge">
-                ⏱️ Timer continuing: <strong>{formatTime(timer)}</strong> ({timer || 0}s elapsed)
+                ⏱️ Timer running: <strong>{formatTime(timer)}</strong> ({timer || 0}s elapsed)
               </div>
 
               <div>
                 {strikes >= 3 ? (
                   <button
+                    type="button"
                     className="btn btn-danger"
                     onClick={() => handleEndTest('You reached the maximum of 3 focus-loss strikes. The exam has ended.')}
                   >
@@ -674,6 +614,7 @@ console.log('5: End');`}
                   </button>
                 ) : (
                   <button
+                    type="button"
                     className="btn btn-primary"
                     onClick={handleContinueAfterFocus}
                   >
@@ -688,145 +629,163 @@ console.log('5: End');`}
     );
   }
 
-
+  // ==========================================
+  // SETUP / PERMISSIONS SCREEN (Full Screen)
+  // ==========================================
   return (
-    <div className="page-container">
-      {/* Alert banner if test was ended due to 3 strikes */}
-      {exitNotice && (
-        <div className="alert-banner">
-          <span>⚠️ {exitNotice}</span>
-          <button
-            onClick={() => setExitNotice('')}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', color: '#991b1b' }}
-          >
-            ✕
-          </button>
+    <div className="setup-screen">
+      {/* Setup Top Navigation */}
+      <header className="setup-topbar">
+        <div style={{ display: 'flex', alignItems: 'center' }}>
+          <span className="setup-brand-title">Athena Assessment Platform</span>
+          <span className="setup-brand-subtitle">Pre-Exam Readiness Check</span>
         </div>
-      )}
+      </header>
 
-      {/* Main Card */}
-      <div className="card-container">
-        {/* Section 1: Camera / Heimdall */}
-        <div className="permission-item">
-          <div className="permission-content">
-            <h3>Configure Camera</h3>
-            <p>Kindly configure Camera to attempt quiz/contests.</p>
-            <div className="action-row">
-              <button
-                className="btn btn-black"
-                disabled={cameraEnabled}
-                onClick={getCameraAccess}
-              >
-                {cameraEnabled ? 'Camera Connected' : 'Get Camera Access'}
-              </button>
-
-              {/* Hidden/Active Video Feed Preview */}
-              <video
-                ref={videoRef}
-                autoPlay
-                playsInline
-                className={`video-preview`}
-              />
-            </div>
-          </div>
-        </div>
-
-        <div className="divider"></div>
-
-        {/* Section 2: Fullscreen */}
-        <div className="permission-item">
-          <div className="permission-content">
-            <h3>Switch to full screen</h3>
+      <main className="setup-content">
+        {/* Alert banner if test was ended due to 3 strikes */}
+        {exitNotice && (
+          <div className="alert-banner">
+            <span>⚠️ {exitNotice}</span>
             <button
-              className="btn btn-primary"
-              disabled={fullScreen}
-              onClick={() => {
-                enableFullScreen();
-              }}
+              type="button"
+              onClick={() => setExitNotice('')}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', color: '#991b1b' }}
             >
-              {fullScreen ? 'Full Screen Enabled' : 'Give Full Screen Permissions'}
+              ✕
             </button>
           </div>
+        )}
+
+        <div className="setup-heading-group">
+          <h1>System Verification</h1>
+          <p>Please configure your camera, full-screen permissions, and storage directories before beginning the exam.</p>
         </div>
 
-        <div className="divider"></div>
+        {/* 3-Card Modern Grid */}
+        <div className="setup-grid">
+          {/* Card 1: Camera */}
+          <div className="setup-card">
+            <div>
+              <div className="setup-card-header">
+                <span className="setup-card-title">Webcam Proctoring</span>
+                <span className={`status-tag ${cameraEnabled ? 'ready' : 'pending'}`}>
+                  {cameraEnabled ? 'Connected ✓' : 'Required'}
+                </span>
+              </div>
+              <p className="setup-card-desc">
+                Your webcam will be monitored and periodically captured throughout the exam.
+              </p>
 
-        {/* Section 3: Snapshot Storage Directories */}
-        <div className="permission-item">
-          <div className="permission-content" style={{ width: '100%' }}>
-            <h3>Snapshot Storage Directories</h3>
-            <p>Select where your camera and screen snapshots will be saved.</p>
-            <div className="storage-config-grid">
-              <div className="storage-config-item">
-                <div className="storage-label-group">
-                  <span className="storage-title">Camera Snaps Folder</span>
-                  <span className="storage-path" title={cameraDir}>{cameraDir || 'Loading default directory...'}</span>
+              {cameraEnabled ? (
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="setup-video-preview"
+                />
+              ) : (
+                <div className="setup-video-placeholder">
+                  Camera not configured yet
+                </div>
+              )}
+            </div>
+
+            <button
+              type="button"
+              className={`btn ${cameraEnabled ? 'btn-outline' : 'btn-primary'}`}
+              disabled={cameraEnabled}
+              onClick={getCameraAccess}
+            >
+              {cameraEnabled ? 'Camera Connected ✓' : 'Connect Camera'}
+            </button>
+          </div>
+
+          {/* Card 2: Full Screen Kiosk */}
+          <div className="setup-card">
+            <div>
+              <div className="setup-card-header">
+                <span className="setup-card-title">Full Screen Lock</span>
+                <span className={`status-tag ${fullScreen ? 'ready' : 'pending'}`}>
+                  {fullScreen ? 'Enabled ✓' : 'Required'}
+                </span>
+              </div>
+              <p className="setup-card-desc">
+                Enables locked full-screen mode to ensure an isolated assessment environment without distractions or external application access.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              className={`btn ${fullScreen ? 'btn-outline' : 'btn-primary'}`}
+              disabled={fullScreen}
+              onClick={enableFullScreen}
+            >
+              {fullScreen ? 'Full Screen Enabled ✓' : 'Enable Full Screen'}
+            </button>
+          </div>
+
+          {/* Card 3: Storage Directories */}
+          <div className="setup-card">
+            <div>
+              <div className="setup-card-header">
+                <span className="setup-card-title">Snapshot Storage</span>
+                <span className="status-tag ready">Configured</span>
+              </div>
+              <p className="setup-card-desc">
+                Select custom directories on disk where your periodic camera and screen snapshots are saved.
+              </p>
+
+              <div className="setup-dir-item">
+                <div>
+                  <div className="setup-dir-label">Camera Snaps</div>
+                  <div className="setup-dir-path" title={cameraDir}>{cameraDir || 'Loading default...'}</div>
                 </div>
                 <button
                   type="button"
                   className="btn btn-outline btn-sm"
                   onClick={selectCameraDirectory}
                 >
-                  Change Directory
+                  Change
                 </button>
               </div>
 
-              <div className="storage-config-item">
-                <div className="storage-label-group">
-                  <span className="storage-title">Screen Snaps Folder</span>
-                  <span className="storage-path" title={screenDir}>{screenDir || 'Loading default directory...'}</span>
+              <div className="setup-dir-item">
+                <div>
+                  <div className="setup-dir-label">Screen Snaps</div>
+                  <div className="setup-dir-path" title={screenDir}>{screenDir || 'Loading default...'}</div>
                 </div>
                 <button
                   type="button"
                   className="btn btn-outline btn-sm"
                   onClick={selectScreenDirectory}
                 >
-                  Change Directory
+                  Change
                 </button>
               </div>
             </div>
           </div>
         </div>
-      </div>
 
-      {/* Bottom Action Buttons */}
-      <div className="bottom-actions">
-        <button
-          className="btn btn-primary"
-          disabled={!cameraEnabled || !fullScreen}
-          onClick={handleStartTest}
-        >
-          Go To Test
-        </button>
-      </div>
+        {/* Setup Footer Action Bar */}
+        <footer className="setup-footer-bar">
+          <div className="setup-footer-status">
+            {!cameraEnabled || !fullScreen
+              ? 'Complete Camera and Full Screen permissions above to start.'
+              : 'All system checks verified. You are ready to enter the assessment.'}
+          </div>
 
-      <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
-        <button onClick={() => {
-          saveVideoScreenShots()
-        }}>
-          saveVideoScreenShots
-        </button>
-
-        <button onClick={() => {
-          saveScreenSnap()
-        }}>
-          saveScreenSnap
-        </button>
-      </div>
-
-
-      <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
-        <button onClick={() => {
-          window.athena?.showRules?.()
-        }}>
-          Show Native Rules
-        </button>
-
-        <button onClick={() => { alert("Rules ...") }}>
-          Show Chromium Rules
-        </button>
-      </div>
-
+          <button
+            type="button"
+            className="btn btn-primary btn-large"
+            disabled={!cameraEnabled || !fullScreen}
+            onClick={handleStartTest}
+          >
+            Go To Test →
+          </button>
+        </footer>
+      </main>
     </div>
   );
 }
