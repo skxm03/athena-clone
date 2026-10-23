@@ -3,29 +3,32 @@
 	"private": true,
 	"version": "0.0.0",
 	"type": "module",
+	"main": "app/app.js",
 	"scripts": {
 		"dev": "vite",
 		"build": "vite build",
 		"lint": "eslint .",
 		"preview": "vite preview",
 		"electron": "electron ./app/app.js",
-		"dist:mac": "electron-builder --mac dmg"
+		"dist:mac": "npm run build && electron-builder --mac dmg"
 	},
-	"dependencies": {
-		"react": "^19.2.8",
-		"react-dom": "^19.2.8"
-	},
-	"devDependencies": {
-		"@eslint/js": "^10.0.1",
-		"@types/react": "^19.2.18",
-		"@types/react-dom": "^19.2.7",
-		"@vitejs/plugin-react": "^6.1.1",
-		"electron": "^44.3.0",
-		"electron-builder": "^26.15.3",
-		"eslint": "^10.10.0",
-		"eslint-plugin-react-hooks": "^7.1.1",
-		"eslint-plugin-react-refresh": "^0.5.6",
-		"globals": "^17.12.0",
-		"vite": "^8.3.0"
+	"build": {
+		"appId": "com.athena5.app",
+		"productName": "Athena",
+		"directories": {
+			"output": "dist"
+		},
+		"files": [
+			"app/**/*",
+			"dist/**/*",
+			"package.json",
+			"!node_modules/.cache/**/*"
+		],
+		"mac": {
+			"target": [
+				"dmg"
+			],
+			"category": "public.app-category.productivity"
+		}
 	}
 }
